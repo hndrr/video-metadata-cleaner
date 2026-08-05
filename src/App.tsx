@@ -23,11 +23,13 @@ type VideoJob = {
   inspectError?: string;
   inspecting?: boolean;
   showMeta?: boolean;
+  overwritten?: boolean;
 };
 
 type CleanResult = {
   outputPath: string;
   stderr: string;
+  overwritten: boolean;
 };
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "m4v"]);
@@ -53,6 +55,8 @@ export default function App() {
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  /** true: 元ファイルを一時ファイル経由で置き換え / false: cleaned/ に新規出力 */
+  const [overwriteMode, setOverwriteMode] = useState(false);
 
   const pendingCount = useMemo(
     () => jobs.filter((job) => job.status === "ready" || job.status === "error").length,
@@ -133,9 +137,16 @@ export default function App() {
     updateJob(job.inputPath, { inspecting: true, inspectError: undefined, showMeta: true });
 
     try {
-      const before = await invoke<MetadataReport>("inspect_metadata", {
-        path: job.inputPath,
-      });
+      // 上書き後は input が処理済みになるので、処理前スナップショットがあれば保持する
+      let before = job.before;
+      const samePath =
+        !!job.outputPath && job.outputPath === job.inputPath && !!job.overwritten;
+
+      if (!before || !samePath) {
+        before = await invoke<MetadataReport>("inspect_metadata", {
+          path: job.inputPath,
+        });
+      }
 
       let after: MetadataReport | undefined;
       if (job.outputPath) {
@@ -161,6 +172,14 @@ export default function App() {
 
   const cleanAll = async (): Promise<void> => {
     if (isRunning) return;
+
+    if (overwriteMode) {
+      const ok = window.confirm(
+        `上書きモードです。\n選択中の ${pendingCount} 件の元ファイルを置き換えます。\n元に戻せません。続行しますか？`,
+      );
+      if (!ok) return;
+    }
+
     setIsRunning(true);
 
     const targets = jobs.filter((job) => job.status === "ready" || job.status === "error");
@@ -171,6 +190,7 @@ export default function App() {
         error: undefined,
         after: undefined,
         inspectError: undefined,
+        overwritten: undefined,
       });
 
       try {
@@ -188,6 +208,7 @@ export default function App() {
 
         const result = await invoke<CleanResult>("clean_video", {
           inputPath: job.inputPath,
+          overwrite: overwriteMode,
         });
 
         let after: MetadataReport | undefined;
@@ -199,6 +220,7 @@ export default function App() {
           updateJob(job.inputPath, {
             status: "done",
             outputPath: result.outputPath,
+            overwritten: result.overwritten,
             before,
             inspecting: false,
             showMeta: true,
@@ -210,6 +232,7 @@ export default function App() {
         updateJob(job.inputPath, {
           status: "done",
           outputPath: result.outputPath,
+          overwritten: result.overwritten,
           before,
           after,
           inspecting: false,
@@ -249,11 +272,15 @@ export default function App() {
           動画を選択
         </button>
         <button
-          className="button"
+          className={`button ${overwriteMode ? "danger" : ""}`}
           onClick={cleanAll}
           disabled={isRunning || pendingCount === 0}
         >
-          {isRunning ? "処理中…" : `${pendingCount}件をクリーンアップ`}
+          {isRunning
+            ? "処理中…"
+            : overwriteMode
+              ? `${pendingCount}件を上書きクリーンアップ`
+              : `${pendingCount}件をクリーンアップ`}
         </button>
         <button
           className="button ghost"
@@ -263,7 +290,31 @@ export default function App() {
         >
           完了をリストから外す
         </button>
+
+        <label
+          className={`toggle ${overwriteMode ? "toggle-on" : ""} ${isRunning ? "toggle-disabled" : ""}`}
+          title="オンにすると cleaned/ を作らず、元ファイルを置き換えます（一時ファイル経由）"
+        >
+          <input
+            type="checkbox"
+            checked={overwriteMode}
+            disabled={isRunning}
+            onChange={(event) => setOverwriteMode(event.target.checked)}
+          />
+          <span className="toggle-ui" aria-hidden />
+          <span className="toggle-label">
+            上書きモード
+            {overwriteMode && <em>危険</em>}
+          </span>
+        </label>
       </section>
+
+      {overwriteMode && (
+        <p className="overwrite-banner" role="status">
+          上書きモード: 元ファイルを置き換えます（先に一時ファイルへ書き出してから差し替え）。
+          取り消せません。
+        </p>
+      )}
 
       <section className={`panel ${isDragging ? "panel-dragging" : ""}`}>
         {jobs.length === 0 ? (
@@ -274,7 +325,12 @@ export default function App() {
             <span>
               ファイルをドラッグ＆ドロップするか、「動画を選択」から追加できます。
             </span>
-            <span>対応形式: MP4 / MOV / M4V · 出力は元と同じ場所の cleaned フォルダ</span>
+            <span>
+              対応形式: MP4 / MOV / M4V ·{" "}
+              {overwriteMode
+                ? "出力: 元ファイルを上書き"
+                : "出力: 元と同じ場所の cleaned フォルダ"}
+            </span>
           </div>
         ) : (
           <ul className="job-list">
@@ -293,6 +349,9 @@ export default function App() {
                     <div className="job-text">
                       <strong>{fileName(job.inputPath)}</strong>
                       <span title={job.inputPath}>{job.inputPath}</span>
+                      {job.overwritten && job.status === "done" && (
+                        <span className="meta-warn">元ファイルを上書き済み</span>
+                      )}
                       {job.error && <span className="error">{job.error}</span>}
                       {job.inspectError && (
                         <span className="error">ExifTool: {job.inspectError}</span>
@@ -340,7 +399,12 @@ export default function App() {
                 {job.showMeta && (job.before || job.after) && (
                   <div className="meta-compare">
                     <MetaPanel title="処理前（入力）" report={job.before} />
-                    <MetaPanel title="処理後（cleaned）" report={job.after} />
+                    <MetaPanel
+                      title={
+                        job.overwritten ? "処理後（上書き）" : "処理後（cleaned）"
+                      }
+                      report={job.after}
+                    />
                   </div>
                 )}
               </li>
@@ -354,8 +418,8 @@ export default function App() {
           -c copy -map_metadata -1 -map_metadata:s -1 -map_chapters -1 -fflags +bitexact
         </code>
         <p className="footer-note">
-          「完了をリストから外す」はアプリ内の一覧だけを整理します。元動画も cleaned
-          フォルダの出力も削除しません。
+          既定は cleaned/ へ新規保存。上書きモードは元ファイルを置き換えます。
+          「完了をリストから外す」は一覧の整理のみで、ファイルは削除しません。
         </p>
       </footer>
     </main>
