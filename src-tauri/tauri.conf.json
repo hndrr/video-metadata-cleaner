@@ -13,9 +13,9 @@
     "windows": [
       {
         "title": "Video Metadata Cleaner",
-        "width": 960,
-        "height": 700,
-        "minWidth": 720,
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
         "minHeight": 560
       }
     ],
