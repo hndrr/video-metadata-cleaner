@@ -139,11 +139,22 @@ fn resolve_output_paths(input: &Path, overwrite: bool) -> Result<(PathBuf, PathB
         .ok_or_else(|| "ファイル名を取得できません".to_string())?;
 
     if overwrite {
-        // 入力を読みながら同じパスへ書けないので、一時ファイルへ書いてから置き換える
+        // 入力を読みながら同じパスへ書けないので、一時ファイルへ書いてから置き換える。
+        // 拡張子は末尾に残す（FFmpeg が muxer を推測できるようにする）。
+        // 例: video-14.mp4 → .video-14.35073.vmc-tmp.mp4
+        let stem = input
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file_name.to_string_lossy().into_owned());
+        let ext = input
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("mp4");
         let temp = parent.join(format!(
-            ".{}.{}.vmc-tmp",
-            file_name.to_string_lossy(),
-            std::process::id()
+            ".{}.{}.vmc-tmp.{}",
+            stem,
+            std::process::id(),
+            ext
         ));
         Ok((temp.clone(), input.to_path_buf(), true))
     } else {
