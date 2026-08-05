@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -24,12 +24,19 @@ type VideoJob = {
   inspecting?: boolean;
   showMeta?: boolean;
   overwritten?: boolean;
+  /** クリーンアップ対象として選択されているか */
+  selected: boolean;
 };
 
 type CleanResult = {
   outputPath: string;
   stderr: string;
   overwritten: boolean;
+};
+
+type PlaybackTarget = {
+  path: string;
+  label: string;
 };
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "m4v"]);
@@ -51,15 +58,24 @@ const extensionOf = (path: string): string => {
 
 const isVideoPath = (path: string): boolean => VIDEO_EXTENSIONS.has(extensionOf(path));
 
+const isCleanable = (job: VideoJob): boolean =>
+  job.status === "ready" || job.status === "error";
+
 export default function App() {
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   /** true: 元ファイルを一時ファイル経由で置き換え / false: cleaned/ に新規出力 */
   const [overwriteMode, setOverwriteMode] = useState(false);
+  const [playback, setPlayback] = useState<PlaybackTarget | null>(null);
 
-  const pendingCount = useMemo(
-    () => jobs.filter((job) => job.status === "ready" || job.status === "error").length,
+  const selectedCleanableCount = useMemo(
+    () => jobs.filter((job) => job.selected && isCleanable(job)).length,
+    [jobs],
+  );
+
+  const cleanableCount = useMemo(
+    () => jobs.filter(isCleanable).length,
     [jobs],
   );
 
@@ -67,6 +83,10 @@ export default function App() {
     () => jobs.filter((job) => job.status === "done").length,
     [jobs],
   );
+
+  const allCleanableSelected =
+    cleanableCount > 0 &&
+    jobs.filter(isCleanable).every((job) => job.selected);
 
   const addPaths = useCallback((paths: string[]): void => {
     const videos = paths.filter(isVideoPath);
@@ -76,7 +96,11 @@ export default function App() {
       const existing = new Set(current.map((job) => job.inputPath));
       const additions = videos
         .filter((path) => !existing.has(path))
-        .map<VideoJob>((inputPath) => ({ inputPath, status: "ready" }));
+        .map<VideoJob>((inputPath) => ({
+          inputPath,
+          status: "ready",
+          selected: true,
+        }));
       return [...current, ...additions];
     });
   }, []);
@@ -133,6 +157,20 @@ export default function App() {
     );
   };
 
+  const toggleJobSelected = (inputPath: string): void => {
+    setJobs((current) =>
+      current.map((job) =>
+        job.inputPath === inputPath ? { ...job, selected: !job.selected } : job,
+      ),
+    );
+  };
+
+  const setAllCleanableSelected = (selected: boolean): void => {
+    setJobs((current) =>
+      current.map((job) => (isCleanable(job) ? { ...job, selected } : job)),
+    );
+  };
+
   const inspectJob = async (job: VideoJob): Promise<void> => {
     updateJob(job.inputPath, { inspecting: true, inspectError: undefined, showMeta: true });
 
@@ -170,19 +208,20 @@ export default function App() {
     }
   };
 
-  const cleanAll = async (): Promise<void> => {
+  const cleanSelected = async (): Promise<void> => {
     if (isRunning) return;
+
+    const targets = jobs.filter((job) => job.selected && isCleanable(job));
+    if (targets.length === 0) return;
 
     if (overwriteMode) {
       const ok = window.confirm(
-        `上書きモードです。\n選択中の ${pendingCount} 件の元ファイルを置き換えます。\n元に戻せません。続行しますか？`,
+        `上書きモードです。\n選択中の ${targets.length} 件の元ファイルを置き換えます。\n元に戻せません。続行しますか？`,
       );
       if (!ok) return;
     }
 
     setIsRunning(true);
-
-    const targets = jobs.filter((job) => job.status === "ready" || job.status === "error");
 
     for (const job of targets) {
       updateJob(job.inputPath, {
@@ -225,6 +264,7 @@ export default function App() {
             inspecting: false,
             showMeta: true,
             inspectError: error instanceof Error ? error.message : String(error),
+            selected: false,
           });
           continue;
         }
@@ -237,6 +277,7 @@ export default function App() {
           after,
           inspecting: false,
           showMeta: true,
+          selected: false,
         });
       } catch (error) {
         updateJob(job.inputPath, {
@@ -252,6 +293,10 @@ export default function App() {
   /** 完了したジョブをリストから外すだけ。出力ファイルは消さない。 */
   const clearFinished = (): void => {
     setJobs((current) => current.filter((job) => job.status !== "done"));
+  };
+
+  const playVideo = (path: string, label: string): void => {
+    setPlayback({ path, label });
   };
 
   return (
@@ -273,14 +318,19 @@ export default function App() {
         </button>
         <button
           className={`button ${overwriteMode ? "danger" : ""}`}
-          onClick={cleanAll}
-          disabled={isRunning || pendingCount === 0}
+          onClick={cleanSelected}
+          disabled={isRunning || selectedCleanableCount === 0}
+          title={
+            selectedCleanableCount === 0
+              ? "クリーンアップする項目にチェックを入れてください"
+              : "チェックした項目だけをクリーンアップします"
+          }
         >
           {isRunning
             ? "処理中…"
             : overwriteMode
-              ? `${pendingCount}件を上書きクリーンアップ`
-              : `${pendingCount}件をクリーンアップ`}
+              ? `選択 ${selectedCleanableCount} 件を上書きクリーンアップ`
+              : `選択 ${selectedCleanableCount} 件をクリーンアップ`}
         </button>
         <button
           className="button ghost"
@@ -290,6 +340,22 @@ export default function App() {
         >
           完了をリストから外す
         </button>
+
+        {cleanableCount > 0 && (
+          <div className="selection-controls">
+            <button
+              className="button compact ghost"
+              onClick={() => setAllCleanableSelected(!allCleanableSelected)}
+              disabled={isRunning}
+              title="待機・エラーの項目の選択を切り替えます"
+            >
+              {allCleanableSelected ? "選択を解除" : "すべて選択"}
+            </button>
+            <span className="selection-hint">
+              {selectedCleanableCount}/{cleanableCount} 件選択
+            </span>
+          </div>
+        )}
 
         <label
           className={`toggle ${overwriteMode ? "toggle-on" : ""} ${isRunning ? "toggle-disabled" : ""}`}
@@ -339,76 +405,126 @@ export default function App() {
                 追加の動画をドロップできます
               </li>
             )}
-            {jobs.map((job) => (
-              <li className="job" key={job.inputPath}>
-                <div className="job-row">
-                  <div className="job-main">
-                    <span className={`status status-${job.status}`}>
-                      {STATUS_LABEL[job.status]}
-                    </span>
-                    <div className="job-text">
-                      <strong>{fileName(job.inputPath)}</strong>
-                      <span title={job.inputPath}>{job.inputPath}</span>
-                      {job.overwritten && job.status === "done" && (
-                        <span className="meta-warn">元ファイルを上書き済み</span>
+            {jobs.map((job) => {
+              const canClean = isCleanable(job);
+              return (
+                <li
+                  className={`job ${job.selected && canClean ? "job-selected" : ""}`}
+                  key={job.inputPath}
+                >
+                  <div className="job-row">
+                    <div className="job-main">
+                      <label
+                        className={`job-check ${!canClean ? "job-check-disabled" : ""}`}
+                        title={
+                          canClean
+                            ? "クリーンアップ対象に含める"
+                            : "完了・処理中の項目は選択できません"
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={job.selected && canClean}
+                          disabled={isRunning || !canClean}
+                          onChange={() => toggleJobSelected(job.inputPath)}
+                        />
+                        <span className="job-check-ui" aria-hidden />
+                      </label>
+                      <span className={`status status-${job.status}`}>
+                        {STATUS_LABEL[job.status]}
+                      </span>
+                      <div className="job-text">
+                        <strong>{fileName(job.inputPath)}</strong>
+                        <span title={job.inputPath}>{job.inputPath}</span>
+                        {job.overwritten && job.status === "done" && (
+                          <span className="meta-warn">元ファイルを上書き済み</span>
+                        )}
+                        {job.error && <span className="error">{job.error}</span>}
+                        {job.inspectError && (
+                          <span className="error">ExifTool: {job.inspectError}</span>
+                        )}
+                        {job.after && (
+                          <span
+                            className={
+                              job.after.flagged.length > 0 ? "meta-warn" : "meta-ok"
+                            }
+                          >
+                            {job.after.flagged.length > 0
+                              ? `処理後も要注意タグ ${job.after.flagged.length} 件`
+                              : `処理後: 要注意タグなし（${job.after.lineCount} 行）`}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="job-actions">
+                      <button
+                        className="button compact"
+                        onClick={() =>
+                          playVideo(job.inputPath, `入力 · ${fileName(job.inputPath)}`)
+                        }
+                        disabled={isRunning && job.status === "processing"}
+                        title="入力動画を再生"
+                      >
+                        再生
+                      </button>
+                      {job.outputPath && job.outputPath !== job.inputPath && (
+                        <button
+                          className="button compact"
+                          onClick={() =>
+                            playVideo(
+                              job.outputPath!,
+                              `出力 · ${fileName(job.outputPath!)}`,
+                            )
+                          }
+                          title="クリーンアップ後の動画を再生"
+                        >
+                          出力を再生
+                        </button>
                       )}
-                      {job.error && <span className="error">{job.error}</span>}
-                      {job.inspectError && (
-                        <span className="error">ExifTool: {job.inspectError}</span>
+                      <button
+                        className="button compact"
+                        onClick={() => inspectJob(job)}
+                        disabled={isRunning || job.inspecting}
+                        title="ExifTool でメタデータを前後比較"
+                      >
+                        {job.inspecting ? "検査中…" : "メタデータ確認"}
+                      </button>
+                      {job.outputPath && (
+                        <button
+                          className="button compact"
+                          onClick={() => revealItemInDir(job.outputPath!)}
+                        >
+                          Finderで表示
+                        </button>
                       )}
-                      {job.after && (
-                        <span className={job.after.flagged.length > 0 ? "meta-warn" : "meta-ok"}>
-                          {job.after.flagged.length > 0
-                            ? `処理後も要注意タグ ${job.after.flagged.length} 件`
-                            : `処理後: 要注意タグなし（${job.after.lineCount} 行）`}
-                        </span>
+                      {(job.before || job.after || job.inspectError) && (
+                        <button
+                          className="button compact ghost"
+                          onClick={() =>
+                            updateJob(job.inputPath, { showMeta: !job.showMeta })
+                          }
+                        >
+                          {job.showMeta ? "詳細を隠す" : "詳細を表示"}
+                        </button>
                       )}
                     </div>
                   </div>
 
-                  <div className="job-actions">
-                    <button
-                      className="button compact"
-                      onClick={() => inspectJob(job)}
-                      disabled={isRunning || job.inspecting}
-                      title="ExifTool でメタデータを前後比較"
-                    >
-                      {job.inspecting ? "検査中…" : "メタデータ確認"}
-                    </button>
-                    {job.outputPath && (
-                      <button
-                        className="button compact"
-                        onClick={() => revealItemInDir(job.outputPath!)}
-                      >
-                        Finderで表示
-                      </button>
-                    )}
-                    {(job.before || job.after || job.inspectError) && (
-                      <button
-                        className="button compact ghost"
-                        onClick={() =>
-                          updateJob(job.inputPath, { showMeta: !job.showMeta })
+                  {job.showMeta && (job.before || job.after) && (
+                    <div className="meta-compare">
+                      <MetaPanel title="処理前（入力）" report={job.before} />
+                      <MetaPanel
+                        title={
+                          job.overwritten ? "処理後（上書き）" : "処理後（cleaned）"
                         }
-                      >
-                        {job.showMeta ? "詳細を隠す" : "詳細を表示"}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {job.showMeta && (job.before || job.after) && (
-                  <div className="meta-compare">
-                    <MetaPanel title="処理前（入力）" report={job.before} />
-                    <MetaPanel
-                      title={
-                        job.overwritten ? "処理後（上書き）" : "処理後（cleaned）"
-                      }
-                      report={job.after}
-                    />
-                  </div>
-                )}
-              </li>
-            ))}
+                        report={job.after}
+                      />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -418,11 +534,65 @@ export default function App() {
           -c copy -map_metadata -1 -map_metadata:s -1 -map_chapters -1 -fflags +bitexact
         </code>
         <p className="footer-note">
-          既定は cleaned/ へ新規保存。上書きモードは元ファイルを置き換えます。
+          チェックした項目だけクリーンアップします。既定は cleaned/
+          へ新規保存。上書きモードは元ファイルを置き換えます。
           「完了をリストから外す」は一覧の整理のみで、ファイルは削除しません。
         </p>
       </footer>
+
+      {playback && (
+        <VideoPlayerModal
+          path={playback.path}
+          label={playback.label}
+          onClose={() => setPlayback(null)}
+        />
+      )}
     </main>
+  );
+}
+
+function VideoPlayerModal({
+  path,
+  label,
+  onClose,
+}: {
+  path: string;
+  label: string;
+  onClose: () => void;
+}) {
+  const src = useMemo(() => convertFileSrc(path), [path]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="player-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-label="動画プレビュー"
+      onClick={onClose}
+    >
+      <div className="player-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="player-header">
+          <div className="player-title">
+            <strong>{label}</strong>
+            <span title={path}>{path}</span>
+          </div>
+          <button className="button compact ghost" onClick={onClose}>
+            閉じる
+          </button>
+        </div>
+        <video className="player-video" src={src} controls autoPlay playsInline>
+          このブラウザでは動画を再生できません。
+        </video>
+      </div>
+    </div>
   );
 }
 
