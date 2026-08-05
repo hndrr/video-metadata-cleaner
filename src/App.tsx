@@ -370,7 +370,6 @@ export default function App() {
           <span className="toggle-ui" aria-hidden />
           <span className="toggle-label">
             上書きモード
-            {overwriteMode && <em>危険</em>}
           </span>
         </label>
       </section>
