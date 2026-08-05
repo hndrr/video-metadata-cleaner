@@ -13,6 +13,8 @@ use tauri_plugin_shell::ShellExt;
 struct CleanResult {
     output_path: String,
     stderr: String,
+    /// true のとき元ファイルを一時ファイル経由で置き換えた
+    overwritten: bool,
 }
 
 #[derive(Serialize)]
@@ -127,22 +129,61 @@ fn run_exiftool(path: &Path) -> Result<MetadataReport, String> {
     })
 }
 
-#[tauri::command]
-async fn clean_video(app: AppHandle, input_path: String) -> Result<CleanResult, String> {
-    let input = PathBuf::from(input_path);
-    validate_input(&input)?;
-
+/// FFmpeg の出力先パスを決める。上書き時は同ディレクトリの一時ファイル。
+fn resolve_output_paths(input: &Path, overwrite: bool) -> Result<(PathBuf, PathBuf, bool), String> {
     let parent = input
         .parent()
         .ok_or_else(|| "入力ファイルの親フォルダを取得できません".to_string())?;
-    let output_dir = parent.join("cleaned");
-    fs::create_dir_all(&output_dir)
-        .map_err(|error| format!("出力フォルダを作成できません: {error}"))?;
-
     let file_name = input
         .file_name()
         .ok_or_else(|| "ファイル名を取得できません".to_string())?;
-    let output = output_dir.join(file_name);
+
+    if overwrite {
+        // 入力を読みながら同じパスへ書けないので、一時ファイルへ書いてから置き換える
+        let temp = parent.join(format!(
+            ".{}.{}.vmc-tmp",
+            file_name.to_string_lossy(),
+            std::process::id()
+        ));
+        Ok((temp.clone(), input.to_path_buf(), true))
+    } else {
+        let output_dir = parent.join("cleaned");
+        fs::create_dir_all(&output_dir)
+            .map_err(|error| format!("出力フォルダを作成できません: {error}"))?;
+        let output = output_dir.join(file_name);
+        Ok((output.clone(), output, false))
+    }
+}
+
+fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
+    // 同一ボリュームなら rename で原子的に置き換え（macOS）
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            // 失敗時はコピー＋削除にフォールバック
+            fs::copy(from, to).map_err(|error| {
+                format!(
+                    "上書きに失敗しました（rename: {rename_error}, copy: {error}）: {} → {}",
+                    from.display(),
+                    to.display()
+                )
+            })?;
+            let _ = fs::remove_file(from);
+            Ok(())
+        }
+    }
+}
+
+#[tauri::command]
+async fn clean_video(
+    app: AppHandle,
+    input_path: String,
+    overwrite: bool,
+) -> Result<CleanResult, String> {
+    let input = PathBuf::from(&input_path);
+    validate_input(&input)?;
+
+    let (write_path, final_path, will_overwrite) = resolve_output_paths(&input, overwrite)?;
 
     let args = vec![
         "-hide_banner".to_string(),
@@ -168,7 +209,7 @@ async fn clean_video(app: AppHandle, input_path: String) -> Result<CleanResult, 
         "+bitexact".to_string(),
         "-metadata".to_string(),
         "encoder=".to_string(),
-        output.to_string_lossy().into_owned(),
+        write_path.to_string_lossy().into_owned(),
     ];
 
     let command = app
@@ -185,6 +226,7 @@ async fn clean_video(app: AppHandle, input_path: String) -> Result<CleanResult, 
     let stderr = String::from_utf8_lossy(&result.stderr).into_owned();
 
     if !result.status.success() {
+        let _ = fs::remove_file(&write_path);
         return Err(if stderr.trim().is_empty() {
             "FFmpegが異常終了しました".to_string()
         } else {
@@ -192,9 +234,17 @@ async fn clean_video(app: AppHandle, input_path: String) -> Result<CleanResult, 
         });
     }
 
+    if will_overwrite {
+        if let Err(error) = replace_file(&write_path, &final_path) {
+            let _ = fs::remove_file(&write_path);
+            return Err(error);
+        }
+    }
+
     Ok(CleanResult {
-        output_path: output.to_string_lossy().into_owned(),
+        output_path: final_path.to_string_lossy().into_owned(),
         stderr,
+        overwritten: will_overwrite,
     })
 }
 
