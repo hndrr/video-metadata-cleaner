@@ -41,6 +41,16 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
   flex-wrap: wrap;
   align-items: center;
 }
+.selection-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.selection-hint {
+  font-size: 12px;
+  color: #6f6f69;
+  white-space: nowrap;
+}
 .button {
   border: 1px solid #d4d4ce;
   border-radius: 10px;
@@ -183,7 +193,56 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
   justify-content: space-between;
   gap: 16px;
 }
+.job-selected {
+  background: rgb(76 139 245 / 6%);
+}
 .job-main { display: flex; align-items: flex-start; gap: 12px; min-width: 0; flex: 1; }
+.job-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  cursor: pointer;
+}
+.job-check input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.job-check-ui {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid #c8c8c2;
+  background: #fff;
+  position: relative;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.job-check input:checked + .job-check-ui {
+  background: #171717;
+  border-color: #171717;
+}
+.job-check input:checked + .job-check-ui::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.job-check input:focus-visible + .job-check-ui {
+  outline: 2px solid #4c8bf5;
+  outline-offset: 2px;
+}
+.job-check-disabled {
+  cursor: default;
+  opacity: 0.4;
+}
 .job-text { display: grid; gap: 4px; min-width: 0; }
 .job-text strong, .job-text span {
   overflow: hidden;
@@ -357,6 +416,62 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
   line-height: 1.5;
 }
 
+.player-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 55%);
+  backdrop-filter: blur(4px);
+}
+.player-modal {
+  width: min(960px, 100%);
+  max-height: min(90vh, 100%);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: #1a1a18;
+  border: 1px solid #353531;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 40%);
+  overflow: hidden;
+}
+.player-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.player-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: #f2f2ef;
+}
+.player-title strong {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-title span {
+  font-size: 11px;
+  color: #a7a7a0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player-video {
+  width: 100%;
+  max-height: min(70vh, 640px);
+  border-radius: 10px;
+  background: #000;
+  outline: none;
+}
+
 @media (max-width: 980px) {
   .meta-compare { grid-template-columns: 1fr; }
   .job-row { flex-direction: column; }
@@ -365,7 +480,19 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
 
 @media (prefers-color-scheme: dark) {
   :root { color: #f2f2ef; background: #161615; }
-  .eyebrow, .description, .footer, .job-text span, .footer-note, .toggle { color: #a7a7a0; }
+  .eyebrow, .description, .footer, .job-text span, .footer-note, .toggle, .selection-hint { color: #a7a7a0; }
+  .job-selected { background: rgb(110 160 255 / 8%); }
+  .job-check-ui {
+    background: #292927;
+    border-color: #555550;
+  }
+  .job-check input:checked + .job-check-ui {
+    background: #f1f1ed;
+    border-color: #f1f1ed;
+  }
+  .job-check input:checked + .job-check-ui::after {
+    border-color: #181817;
+  }
   .button.danger { background: #f97066; color: #1a0a08; border-color: #f97066; }
   .button.danger:hover:not(:disabled) { background: #fda29b; }
   .toggle-on .toggle-label { color: #f97066; }
