@@ -1,5 +1,7 @@
 # Video Metadata Cleaner
 
+<img width="1288" height="807" alt="2026-08-05 19 28 35" src="https://github.com/user-attachments/assets/5f0c0917-7a4b-4bc8-a697-c630849581e2" />
+
 macOS 向けのデスクトップアプリです。動画を**再エンコードせず**にコンテナを再ラップし、一般メタデータ・ストリームメタデータ・チャプター・C2PA / JUMBF などを引き継がずに書き出します。
 
 映像・音声ストリーム自体は `-c copy` のままコピーするため、画質・音質は変わりません。
