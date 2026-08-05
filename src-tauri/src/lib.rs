@@ -267,13 +267,48 @@ async fn inspect_metadata(path: String) -> Result<MetadataReport, String> {
         .map_err(|error| format!("メタデータ検査タスクが失敗しました: {error}"))?
 }
 
+/// ExifTool が PATH 上で実行できるか確認する（必須依存）。
+#[tauri::command]
+async fn check_exiftool() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let output = Command::new("exiftool")
+            .arg("-ver")
+            .output()
+            .map_err(|error| {
+                if error.kind() == ErrorKind::NotFound {
+                    "exiftool が見つかりません。brew install exiftool を実行してください。"
+                        .to_string()
+                } else {
+                    format!("exiftool の実行に失敗しました: {error}")
+                }
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(if stderr.trim().is_empty() {
+                "exiftool -ver が異常終了しました".to_string()
+            } else {
+                stderr.into_owned()
+            });
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    })
+    .await
+    .map_err(|error| format!("exiftool 確認タスクが失敗しました: {error}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![clean_video, inspect_metadata])
+        .invoke_handler(tauri::generate_handler![
+            clean_video,
+            inspect_metadata,
+            check_exiftool
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

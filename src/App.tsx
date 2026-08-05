@@ -61,6 +61,11 @@ const isVideoPath = (path: string): boolean => VIDEO_EXTENSIONS.has(extensionOf(
 const isCleanable = (job: VideoJob): boolean =>
   job.status === "ready" || job.status === "error";
 
+type ExifToolStatus =
+  | { state: "checking" }
+  | { state: "ready"; version: string }
+  | { state: "missing"; message: string };
+
 export default function App() {
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -68,6 +73,9 @@ export default function App() {
   /** true: 元ファイルを一時ファイル経由で置き換え / false: cleaned/ に新規出力 */
   const [overwriteMode, setOverwriteMode] = useState(false);
   const [playback, setPlayback] = useState<PlaybackTarget | null>(null);
+  const [exiftool, setExiftool] = useState<ExifToolStatus>({ state: "checking" });
+
+  const exiftoolReady = exiftool.state === "ready";
 
   const selectedCleanableCount = useMemo(
     () => jobs.filter((job) => job.selected && isCleanable(job)).length,
@@ -106,6 +114,30 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const version = await invoke<string>("check_exiftool");
+        if (!cancelled) {
+          setExiftool({ state: "ready", version });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setExiftool({
+            state: "missing",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
 
@@ -117,7 +149,9 @@ export default function App() {
           setIsDragging(false);
         } else if (event.payload.type === "drop") {
           setIsDragging(false);
-          addPaths(event.payload.paths);
+          if (exiftoolReady) {
+            addPaths(event.payload.paths);
+          }
         }
       });
 
@@ -132,7 +166,7 @@ export default function App() {
       cancelled = true;
       unlisten?.();
     };
-  }, [addPaths]);
+  }, [addPaths, exiftoolReady]);
 
   const selectVideos = async (): Promise<void> => {
     const selected = await open({
@@ -172,6 +206,8 @@ export default function App() {
   };
 
   const inspectJob = async (job: VideoJob): Promise<void> => {
+    if (!exiftoolReady) return;
+
     updateJob(job.inputPath, { inspecting: true, inspectError: undefined, showMeta: true });
 
     try {
@@ -208,8 +244,21 @@ export default function App() {
     }
   };
 
+  const recheckExiftool = async (): Promise<void> => {
+    setExiftool({ state: "checking" });
+    try {
+      const version = await invoke<string>("check_exiftool");
+      setExiftool({ state: "ready", version });
+    } catch (error) {
+      setExiftool({
+        state: "missing",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   const cleanSelected = async (): Promise<void> => {
-    if (isRunning) return;
+    if (isRunning || !exiftoolReady) return;
 
     const targets = jobs.filter((job) => job.selected && isCleanable(job));
     if (targets.length === 0) return;
@@ -233,16 +282,12 @@ export default function App() {
       });
 
       try {
-        // Capture before metadata while cleaning, if not already loaded.
+        // 処理前メタデータ（必須）
         let before = job.before;
         if (!before) {
-          try {
-            before = await invoke<MetadataReport>("inspect_metadata", {
-              path: job.inputPath,
-            });
-          } catch {
-            // Inspection is best-effort; cleaning should still proceed.
-          }
+          before = await invoke<MetadataReport>("inspect_metadata", {
+            path: job.inputPath,
+          });
         }
 
         const result = await invoke<CleanResult>("clean_video", {
@@ -250,24 +295,9 @@ export default function App() {
           overwrite: overwriteMode,
         });
 
-        let after: MetadataReport | undefined;
-        try {
-          after = await invoke<MetadataReport>("inspect_metadata", {
-            path: result.outputPath,
-          });
-        } catch (error) {
-          updateJob(job.inputPath, {
-            status: "done",
-            outputPath: result.outputPath,
-            overwritten: result.overwritten,
-            before,
-            inspecting: false,
-            showMeta: true,
-            inspectError: error instanceof Error ? error.message : String(error),
-            selected: false,
-          });
-          continue;
-        }
+        const after = await invoke<MetadataReport>("inspect_metadata", {
+          path: result.outputPath,
+        });
 
         updateJob(job.inputPath, {
           status: "done",
@@ -313,17 +343,23 @@ export default function App() {
       </header>
 
       <section className="toolbar">
-        <button className="button primary" onClick={selectVideos} disabled={isRunning}>
+        <button
+          className="button primary"
+          onClick={selectVideos}
+          disabled={isRunning || !exiftoolReady}
+        >
           動画を選択
         </button>
         <button
           className={`button ${overwriteMode ? "danger" : ""}`}
           onClick={cleanSelected}
-          disabled={isRunning || selectedCleanableCount === 0}
+          disabled={isRunning || !exiftoolReady || selectedCleanableCount === 0}
           title={
-            selectedCleanableCount === 0
-              ? "クリーンアップする項目にチェックを入れてください"
-              : "チェックした項目だけをクリーンアップします"
+            !exiftoolReady
+              ? "ExifTool が必要です"
+              : selectedCleanableCount === 0
+                ? "クリーンアップする項目にチェックを入れてください"
+                : "チェックした項目だけをクリーンアップします"
           }
         >
           {isRunning
@@ -346,7 +382,7 @@ export default function App() {
             <button
               className="button compact ghost"
               onClick={() => setAllCleanableSelected(!allCleanableSelected)}
-              disabled={isRunning}
+              disabled={isRunning || !exiftoolReady}
               title="待機・エラーの項目の選択を切り替えます"
             >
               {allCleanableSelected ? "選択を解除" : "すべて選択"}
@@ -358,23 +394,42 @@ export default function App() {
         )}
 
         <label
-          className={`toggle ${overwriteMode ? "toggle-on" : ""} ${isRunning ? "toggle-disabled" : ""}`}
+          className={`toggle ${overwriteMode ? "toggle-on" : ""} ${isRunning || !exiftoolReady ? "toggle-disabled" : ""}`}
           title="オンにすると cleaned/ を作らず、元ファイルを置き換えます（一時ファイル経由）"
         >
           <input
             type="checkbox"
             checked={overwriteMode}
-            disabled={isRunning}
+            disabled={isRunning || !exiftoolReady}
             onChange={(event) => setOverwriteMode(event.target.checked)}
           />
           <span className="toggle-ui" aria-hidden />
-          <span className="toggle-label">
-            上書きモード
-          </span>
+          <span className="toggle-label">上書きモード</span>
         </label>
       </section>
 
-      {overwriteMode && (
+      {exiftool.state === "checking" && (
+        <p className="info-banner" role="status">
+          ExifTool を確認しています…
+        </p>
+      )}
+
+      {exiftool.state === "missing" && (
+        <div className="error-banner" role="alert">
+          <div>
+            <strong>ExifTool が必須です</strong>
+            <p>
+              {exiftool.message} インストール後、「再確認」を押してください。
+            </p>
+            <code>brew install exiftool</code>
+          </div>
+          <button className="button compact" onClick={recheckExiftool}>
+            再確認
+          </button>
+        </div>
+      )}
+
+      {overwriteMode && exiftoolReady && (
         <p className="overwrite-banner" role="status">
           上書きモード: 元ファイルを置き換えます（先に一時ファイルへ書き出してから差し替え）。
           取り消せません。
@@ -484,8 +539,12 @@ export default function App() {
                       <button
                         className="button compact"
                         onClick={() => inspectJob(job)}
-                        disabled={isRunning || job.inspecting}
-                        title="ExifTool でメタデータを前後比較"
+                        disabled={isRunning || !exiftoolReady || job.inspecting}
+                        title={
+                          exiftoolReady
+                            ? "ExifTool でメタデータを前後比較"
+                            : "ExifTool が必要です"
+                        }
                       >
                         {job.inspecting ? "検査中…" : "メタデータ確認"}
                       </button>
@@ -536,6 +595,9 @@ export default function App() {
           チェックした項目だけクリーンアップします。既定は cleaned/
           へ新規保存。上書きモードは元ファイルを置き換えます。
           「完了をリストから外す」は一覧の整理のみで、ファイルは削除しません。
+          {exiftool.state === "ready" && (
+            <> · ExifTool {exiftool.version}</>
+          )}
         </p>
       </footer>
 
