@@ -133,6 +133,46 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
   font-size: 13px;
   line-height: 1.5;
 }
+.info-banner {
+  margin: -6px 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f4f4f0;
+  border: 1px solid #e2e2dc;
+  color: #5d5d57;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.error-banner {
+  margin: -6px 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #fee4e2;
+  border: 1px solid #fecdca;
+  color: #912018;
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.error-banner strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.error-banner p {
+  margin: 0 0 8px;
+}
+.error-banner code {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #fecdca;
+  font-size: 12px;
+  color: #7a271a;
+}
 
 .panel {
   min-height: 280px;
@@ -500,6 +540,21 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
   .toggle-ui { background: #42423e; }
   .overwrite-banner {
     background: #2c1115;
+    border-color: #6b2229;
+    color: #fecdca;
+  }
+  .info-banner {
+    background: #20201e;
+    border-color: #353531;
+    color: #a7a7a0;
+  }
+  .error-banner {
+    background: #2c1115;
+    border-color: #6b2229;
+    color: #fecdca;
+  }
+  .error-banner code {
+    background: #1a0a08;
     border-color: #6b2229;
     color: #fecdca;
   }

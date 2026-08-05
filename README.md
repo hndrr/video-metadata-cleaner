@@ -11,7 +11,7 @@ macOS 向けのデスクトップアプリです。動画を**再エンコード
 - MP4 / MOV / M4V のメタデータ削除（ロスレス remux）
 - 複数ファイルの一括処理
 - ドラッグ＆ドロップ、またはファイル選択ダイアログで追加
-- 処理前後のメタデータを ExifTool で表形式比較（任意）
+- 処理前後のメタデータを ExifTool で表形式比較（**必須**）
 - 出力は元ファイルと同じ場所の `cleaned/` フォルダ（元ファイルは変更しない）
 
 ## 必要なもの
@@ -21,7 +21,7 @@ macOS 向けのデスクトップアプリです。動画を**再エンコード
 | [Node.js](https://nodejs.org/)（LTS 推奨） | フロントエンド / Tauri CLI |
 | [Rust](https://www.rust-lang.org/)（`rustup` 推奨） | Tauri バックエンド |
 | [FFmpeg](https://ffmpeg.org/) | 実処理（Homebrew 推奨） |
-| [ExifTool](https://exiftool.org/) | メタデータ確認 UI（任意） |
+| [ExifTool](https://exiftool.org/) | メタデータ確認・処理前後比較（**必須**） |
 | Xcode Command Line Tools | macOS のリンク・署名まわり |
 
 ```bash
@@ -33,9 +33,9 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Node は公式インストーラ / nvm / mise 等で用意
 
-# FFmpeg / ExifTool（Homebrew の例）
+# FFmpeg / ExifTool（Homebrew の例）— どちらも必須
 brew install ffmpeg
-brew install exiftool   # 任意。UI の「メタデータ確認」に必要
+brew install exiftool
 ```
 
 `rustup` を入れた直後のシェルでは、一度だけ次を実行するか、ターミナルを開き直してください（以降は通常不要です）。
@@ -54,7 +54,7 @@ npm -v
 rustc --version
 cargo --version
 ffmpeg -version | head -1
-exiftool -ver   # 任意
+exiftool -ver
 ```
 
 ## セットアップ
@@ -162,7 +162,7 @@ open "src-tauri/target/release/bundle/macos/Video Metadata Cleaner.app"
 | `icon.png: No such file` | `src-tauri/icons/` が無い。`npm run tauri icon path/to/1024.png` で生成 |
 | sidecar 関連エラー | `ls src-tauri/binaries/` でトリプル付きバイナリがあるか確認 |
 | リンク / SDK エラー | `xcode-select --install` または CLT の再インストール |
-| `exiftool が見つかりません` | クリーンアップ自体は動く。確認 UI 用に `brew install exiftool` |
+| `exiftool が見つかりません` / 起動時に必須バナー | `brew install exiftool` のあとアプリを再起動、またはバナーの「再確認」 |
 
 ## 使い方
 
@@ -170,13 +170,13 @@ open "src-tauri/target/release/bundle/macos/Video Metadata Cleaner.app"
 2. 動画をドラッグ＆ドロップ、または「動画を選択」
 3. 「クリーンアップ」を実行
 4. 出力は `元ファイルと同じディレクトリ/cleaned/`
-5. （任意）「メタデータ確認」で処理前後を表形式比較
+5. クリーンアップ後、ExifTool による処理前後比較が自動表示される（「メタデータ確認」でも再表示可）
 
 | 操作 | 意味 |
 |------|------|
 | 上書きモード | オフ（既定）: `cleaned/` に新規保存。オン: 元ファイルを一時ファイル経由で置き換え（実行前に確認ダイアログ） |
 | 完了をリストから外す | 一覧から完了ジョブだけを外す。**ファイルは削除しない** |
-| メタデータ確認 | ローカル `exiftool` でタグを表表示 |
+| メタデータ確認 | 必須の `exiftool` でタグを表表示 |
 | Finder で表示 | 出力ファイルの場所を開く |
 
 ## 実際に走らせている FFmpeg コマンド
@@ -222,15 +222,43 @@ exiftool -G1 -a -s "path/to/cleaned/video.mp4"
 - [Tauri 2](https://tauri.app/)
 - React + TypeScript + Vite
 - FFmpeg（システムにインストールしたものを sidecar として利用）
-- ExifTool（任意・検証用）
+- ExifTool（必須・メタデータ確認）
 
-## ライセンス（FFmpeg）
+## ライセンス
 
-本アプリ本体のライセンスは、リポジトリに LICENSE がある場合はそれに従います。
+### 本プロジェクト（Video Metadata Cleaner）
 
-**FFmpeg のバイナリは本リポジトリに含めません。**  
-利用する FFmpeg ビルドのライセンス（LGPL / GPL 等）と再配布時の義務は、利用者自身で確認してください。  
-本プロジェクトの処理は再エンコードしないため GPL 系エンコーダは不要ですが、それでも **FFmpeg 同梱での配布は行わない** 方針です。
+ソースコード・ドキュメントは **[MIT License](./LICENSE)** です。
+
+- 商用・非商用を問わず、利用・改変・再配布・有償販売ができます
+- 再配布時は、著作権表示と MIT の全文を残してください
+- 作者は本ソフトウェアについて保証しません（無保証）
+
+### FFmpeg について（第三者ソフトウェア）
+
+本アプリは実行時に **FFmpeg** を呼び出して動画を処理します。  
+FFmpeg は本プロジェクトの著作物ではなく、FFmpeg プロジェクトおよびその貢献者の著作物です。
+
+| 項目 | 方針 |
+|------|------|
+| Git リポジトリへの同梱 | **しない**（`src-tauri/binaries/ffmpeg-*` は gitignore） |
+| 開発時 | 利用者が自分の Mac に入れた FFmpeg を、`./scripts/copy-local-ffmpeg.sh` でローカルにコピーして使う |
+| 配布用ビルド | **FFmpeg を同梱した配布は想定しない**（README の「リリースビルド」もローカル用） |
+
+FFmpeg 自体のライセンスは、ビルドの内容によって **LGPL** または **GPL** などになります（Homebrew 版などもビルド設定次第です）。  
+本アプリはストリームを `-c copy` するだけで、GPL 寄りのエンコーダを組み込む必要はありませんが、**手元の FFmpeg バイナリをアプリと一緒に他人へ配る場合**は、次を利用者自身で確認・遵守してください。
+
+1. その FFmpeg が LGPL / GPL のどちらでビルドされているか
+2. ソース提供・ライセンス表記・動的リンクなど、再配布時に必要な義務
+3. 依存する共有ライブラリ（dylib）の再配布条件
+
+公式情報: [https://ffmpeg.org/legal.html](https://ffmpeg.org/legal.html)
+
+### ExifTool
+
+本アプリの実行に **ExifTool は必須** です（処理前後のメタデータ比較に使用）。  
+バイナリはリポジトリに含めず、利用者が別途インストールします（例: `brew install exiftool`）。  
+ライセンスは ExifTool 側の条件に従ってください。
 
 ## 注意
 
