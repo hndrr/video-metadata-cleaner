@@ -28,7 +28,6 @@ xcode-select --install
 
 # Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
 
 # Node は公式インストーラ / nvm / mise 等で用意
 
@@ -36,6 +35,14 @@ source "$HOME/.cargo/env"
 brew install ffmpeg
 brew install exiftool   # 任意。UI の「メタデータ確認」に必要
 ```
+
+`rustup` を入れた直後のシェルでは、一度だけ次を実行するか、ターミナルを開き直してください（以降は通常不要です）。
+
+```bash
+source "$HOME/.cargo/env"
+```
+
+`rustc --version` が通るなら PATH は既に通っています。毎回実行する必要はありません。
 
 バージョン確認:
 
@@ -94,9 +101,6 @@ Tauri は外部バイナリを **sidecar** として呼びます。システム�
 ## 開発ビルド（GUI 起動）
 
 ```bash
-# 新しいシェルでは必要に応じて
-source "$HOME/.cargo/env"
-
 npm run tauri dev
 ```
 
@@ -121,8 +125,6 @@ npm run dev
 最適化バイナリ / `.app` を作る場合:
 
 ```bash
-source "$HOME/.cargo/env"
-
 # sidecar が無い・古い場合は先に
 ./scripts/copy-local-ffmpeg.sh
 
@@ -154,7 +156,7 @@ open "src-tauri/target/release/bundle/macos/Video Metadata Cleaner.app"
 | 症状 | 対処 |
 |------|------|
 | `ffmpeg が見つかりません` | `brew install ffmpeg` のあと `./scripts/copy-local-ffmpeg.sh` |
-| `rustc が見つかりません` | rustup 導入後、`source "$HOME/.cargo/env"` |
+| `rustc が見つかりません` | rustup 導入後、ターミナルを開き直すか `source "$HOME/.cargo/env"` |
 | `icon.png: No such file` | `src-tauri/icons/` が無い。`npm run tauri icon path/to/1024.png` で生成 |
 | sidecar 関連エラー | `ls src-tauri/binaries/` でトリプル付きバイナリがあるか確認 |
 | リンク / SDK エラー | `xcode-select --install` または CLT の再インストール |
