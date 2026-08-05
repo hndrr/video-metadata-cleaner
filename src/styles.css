@@ -11,9 +11,9 @@ body { margin: 0; min-width: 720px; min-height: 100vh; }
 button { font: inherit; }
 
 .app-shell {
-  width: min(920px, calc(100vw - 48px));
+  width: min(1480px, calc(100vw - 40px));
   margin: 0 auto;
-  padding: 48px 0 32px;
+  padding: 32px 0 28px;
 }
 
 .header { margin-bottom: 28px; }
@@ -139,8 +139,9 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
 
 .meta-compare {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
+  width: 100%;
 }
 .meta-panel {
   border: 1px solid #e2e2dc;
@@ -148,6 +149,7 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
   background: #fafaf7;
   padding: 12px;
   min-width: 0;
+  overflow: hidden;
 }
 .meta-panel h3 {
   margin: 0 0 10px;
@@ -190,25 +192,27 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
   color: #5d5d57;
 }
 .meta-table-wrap {
-  max-height: 280px;
+  max-height: 320px;
   overflow: auto;
   border-radius: 8px;
   border: 1px solid #e2e2dc;
   background: #fff;
 }
 .meta-table-wrap-flagged {
-  max-height: 200px;
+  max-height: 220px;
   border-color: #f0c89a;
 }
 .meta-table {
   width: 100%;
+  min-width: 28rem;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 .meta-table th,
 .meta-table td {
-  padding: 7px 9px;
+  padding: 7px 10px;
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid #ebebe5;
@@ -224,6 +228,12 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
   text-transform: uppercase;
   z-index: 1;
 }
+.meta-table th:nth-child(1),
+.meta-table td.meta-group { width: 7rem; }
+.meta-table th:nth-child(2),
+.meta-table td.meta-tag { width: 10.5rem; }
+.meta-table th:nth-child(3),
+.meta-table td.meta-value { width: auto; }
 .meta-table-wrap-flagged .meta-table th {
   background: #ffe8cc;
   color: #7a3410;
@@ -242,9 +252,10 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
 }
 .meta-group {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: #6b6b64;
   font-weight: 600;
-  width: 22%;
 }
 .meta-row-flagged .meta-group,
 .meta-table-wrap-flagged .meta-group {
@@ -252,12 +263,16 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
 }
 .meta-tag {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: #44443e;
-  width: 28%;
 }
 .meta-value {
-  word-break: break-word;
+  /* 列幅を確保したうえで、必要なときだけ折り返す（1文字縦並びを防ぐ） */
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
   color: #2a2a26;
 }
 
@@ -269,7 +284,7 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
   line-height: 1.5;
 }
 
-@media (max-width: 820px) {
+@media (max-width: 980px) {
   .meta-compare { grid-template-columns: 1fr; }
   .job-row { flex-direction: column; }
   .job-actions { width: 100%; justify-content: flex-start; }
