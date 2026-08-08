@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::{
-    fs,
+    env, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
     process::Command,
@@ -63,6 +63,32 @@ const FLAGGED_KEYWORDS: &[&str] = &[
     "DateTimeOriginal",
 ];
 
+/// Finder から起動した macOS アプリは、シェルの PATH を引き継がないことがある。
+/// まず PATH と明示設定を確認し、その後 Homebrew / MacPorts の標準パスを確認する。
+fn resolve_exiftool() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(path) = env::var_os("EXIFTOOL_PATH") {
+        candidates.push(PathBuf::from(path));
+    }
+
+    if let Some(path) = env::var_os("PATH") {
+        candidates.extend(env::split_paths(&path).map(|directory| directory.join("exiftool")));
+    }
+
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/exiftool"),
+        PathBuf::from("/usr/local/bin/exiftool"),
+        PathBuf::from("/opt/local/bin/exiftool"),
+    ]);
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+fn exiftool_missing_message() -> String {
+    "exiftool が見つかりません。brew install exiftool を実行してください。".to_string()
+}
+
 fn validate_input(path: &PathBuf) -> Result<(), String> {
     if !path.is_file() {
         return Err(format!("入力ファイルが見つかりません: {}", path.display()));
@@ -86,7 +112,8 @@ fn run_exiftool(path: &Path) -> Result<MetadataReport, String> {
         return Err(format!("ファイルが見つかりません: {}", path.display()));
     }
 
-    let output = Command::new("exiftool")
+    let exiftool = resolve_exiftool().ok_or_else(exiftool_missing_message)?;
+    let output = Command::new(exiftool)
         .args(["-G1", "-a", "-s", "-api", "largefilesupport=1"])
         .arg(path)
         .output()
@@ -112,14 +139,18 @@ fn run_exiftool(path: &Path) -> Result<MetadataReport, String> {
     let flagged = stdout
         .lines()
         .filter(|line| {
-            FLAGGED_KEYWORDS
-                .iter()
-                .any(|keyword| line.to_ascii_lowercase().contains(&keyword.to_ascii_lowercase()))
+            FLAGGED_KEYWORDS.iter().any(|keyword| {
+                line.to_ascii_lowercase()
+                    .contains(&keyword.to_ascii_lowercase())
+            })
         })
         .map(str::to_string)
         .collect::<Vec<_>>();
 
-    let line_count = stdout.lines().filter(|line| !line.trim().is_empty()).count();
+    let line_count = stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count();
 
     Ok(MetadataReport {
         path: path.to_string_lossy().into_owned(),
@@ -146,16 +177,8 @@ fn resolve_output_paths(input: &Path, overwrite: bool) -> Result<(PathBuf, PathB
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| file_name.to_string_lossy().into_owned());
-        let ext = input
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("mp4");
-        let temp = parent.join(format!(
-            ".{}.{}.vmc-tmp.{}",
-            stem,
-            std::process::id(),
-            ext
-        ));
+        let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("mp4");
+        let temp = parent.join(format!(".{}.{}.vmc-tmp.{}", stem, std::process::id(), ext));
         Ok((temp.clone(), input.to_path_buf(), true))
     } else {
         let output_dir = parent.join("cleaned");
@@ -271,7 +294,8 @@ async fn inspect_metadata(path: String) -> Result<MetadataReport, String> {
 #[tauri::command]
 async fn check_exiftool() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let output = Command::new("exiftool")
+        let exiftool = resolve_exiftool().ok_or_else(exiftool_missing_message)?;
+        let output = Command::new(exiftool)
             .arg("-ver")
             .output()
             .map_err(|error| {
