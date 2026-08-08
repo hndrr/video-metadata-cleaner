@@ -82,11 +82,27 @@ fn resolve_exiftool() -> Option<PathBuf> {
         PathBuf::from("/opt/local/bin/exiftool"),
     ]);
 
-    candidates.into_iter().find(|path| path.is_file())
+    candidates.into_iter().find(|path| is_executable_file(path))
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.is_file()
+        && path
+            .metadata()
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
 }
 
 fn exiftool_missing_message() -> String {
-    "exiftool が見つかりません。brew install exiftool を実行してください。".to_string()
+    "exiftool が見つかりません。Homebrew または MacPorts でインストールするか、EXIFTOOL_PATH を設定してください。".to_string()
 }
 
 fn validate_input(path: &PathBuf) -> Result<(), String> {
@@ -119,7 +135,7 @@ fn run_exiftool(path: &Path) -> Result<MetadataReport, String> {
         .output()
         .map_err(|error| {
             if error.kind() == ErrorKind::NotFound {
-                "exiftool が見つかりません。brew install exiftool を実行してください。".to_string()
+                exiftool_missing_message()
             } else {
                 format!("exiftool の実行に失敗しました: {error}")
             }
@@ -300,8 +316,7 @@ async fn check_exiftool() -> Result<String, String> {
             .output()
             .map_err(|error| {
                 if error.kind() == ErrorKind::NotFound {
-                    "exiftool が見つかりません。brew install exiftool を実行してください。"
-                        .to_string()
+                    exiftool_missing_message()
                 } else {
                     format!("exiftool の実行に失敗しました: {error}")
                 }
