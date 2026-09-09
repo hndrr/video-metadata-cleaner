@@ -13,7 +13,7 @@ type MetadataReport = {
   lineCount: number;
 };
 
-type VideoJob = {
+type MediaJob = {
   inputPath: string;
   outputPath?: string;
   status: JobStatus;
@@ -39,7 +39,8 @@ type PlaybackTarget = {
   label: string;
 };
 
-const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "m4v"]);
+const AUDIO_EXTENSIONS = new Set(["mp3", "m4a", "wav", "flac"]);
+const MEDIA_EXTENSIONS = new Set(["mp4", "mov", "m4v", ...AUDIO_EXTENSIONS]);
 
 const STATUS_LABEL: Record<JobStatus, string> = {
   ready: "待機",
@@ -56,9 +57,9 @@ const extensionOf = (path: string): string => {
   return idx >= 0 ? name.slice(idx + 1).toLowerCase() : "";
 };
 
-const isVideoPath = (path: string): boolean => VIDEO_EXTENSIONS.has(extensionOf(path));
+const isMediaPath = (path: string): boolean => MEDIA_EXTENSIONS.has(extensionOf(path));
 
-const isCleanable = (job: VideoJob): boolean =>
+const isCleanable = (job: MediaJob): boolean =>
   job.status === "ready" || job.status === "error";
 
 type ExifToolStatus =
@@ -67,7 +68,7 @@ type ExifToolStatus =
   | { state: "missing"; message: string };
 
 export default function App() {
-  const [jobs, setJobs] = useState<VideoJob[]>([]);
+  const [jobs, setJobs] = useState<MediaJob[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   /** true: 元ファイルを一時ファイル経由で置き換え / false: cleaned/ に新規出力 */
@@ -97,14 +98,14 @@ export default function App() {
     jobs.filter(isCleanable).every((job) => job.selected);
 
   const addPaths = useCallback((paths: string[]): void => {
-    const videos = paths.filter(isVideoPath);
-    if (videos.length === 0) return;
+    const media = paths.filter(isMediaPath);
+    if (media.length === 0) return;
 
     setJobs((current) => {
       const existing = new Set(current.map((job) => job.inputPath));
-      const additions = videos
+      const additions = media
         .filter((path) => !existing.has(path))
-        .map<VideoJob>((inputPath) => ({
+        .map<MediaJob>((inputPath) => ({
           inputPath,
           status: "ready",
           selected: true,
@@ -168,14 +169,14 @@ export default function App() {
     };
   }, [addPaths, exiftoolReady]);
 
-  const selectVideos = async (): Promise<void> => {
+  const selectMedia = async (): Promise<void> => {
     const selected = await open({
       multiple: true,
-      title: "動画を選択",
+      title: "動画・音声を選択",
       filters: [
         {
-          name: "Video",
-          extensions: ["mp4", "mov", "m4v"],
+          name: "Video / Audio",
+          extensions: [...MEDIA_EXTENSIONS],
         },
       ],
     });
@@ -185,7 +186,7 @@ export default function App() {
     addPaths(paths);
   };
 
-  const updateJob = (inputPath: string, patch: Partial<VideoJob>): void => {
+  const updateJob = (inputPath: string, patch: Partial<MediaJob>): void => {
     setJobs((current) =>
       current.map((job) => (job.inputPath === inputPath ? { ...job, ...patch } : job)),
     );
@@ -205,7 +206,7 @@ export default function App() {
     );
   };
 
-  const inspectJob = async (job: VideoJob): Promise<void> => {
+  const inspectJob = async (job: MediaJob): Promise<void> => {
     if (!exiftoolReady) return;
 
     updateJob(job.inputPath, { inspecting: true, inspectError: undefined, showMeta: true });
@@ -325,7 +326,7 @@ export default function App() {
     setJobs((current) => current.filter((job) => job.status !== "done"));
   };
 
-  const playVideo = (path: string, label: string): void => {
+  const playMedia = (path: string, label: string): void => {
     setPlayback({ path, label });
   };
 
@@ -336,8 +337,8 @@ export default function App() {
           <p className="eyebrow">macOS / lossless remux</p>
           <h1>Video Metadata Cleaner</h1>
           <p className="description">
-            映像・音声を再エンコードせず、MP4/MOVのメタデータ、チャプター、C2PA/JUMBF領域を引き継がずに
-            保存します。処理後は ExifTool で前後を自動比較します。
+            動画・音声を再エンコードせず、メタデータとチャプターを引き継がずに保存します。
+            音声ファイルはカバー画像も削除します。処理後は ExifTool で前後を自動比較します。
           </p>
         </div>
       </header>
@@ -345,10 +346,10 @@ export default function App() {
       <section className="toolbar">
         <button
           className="button primary"
-          onClick={selectVideos}
+          onClick={selectMedia}
           disabled={isRunning || !exiftoolReady}
         >
-          動画を選択
+          動画・音声を選択
         </button>
         <button
           className={`button ${overwriteMode ? "danger" : ""}`}
@@ -440,13 +441,13 @@ export default function App() {
         {jobs.length === 0 ? (
           <div className={`empty ${isDragging ? "empty-dragging" : ""}`}>
             <strong>
-              {isDragging ? "ここにドロップ" : "動画が選択されていません"}
+              {isDragging ? "ここにドロップ" : "動画・音声が選択されていません"}
             </strong>
             <span>
-              ファイルをドラッグ＆ドロップするか、「動画を選択」から追加できます。
+              ファイルをドラッグ＆ドロップするか、「動画・音声を選択」から追加できます。
             </span>
             <span>
-              対応形式: MP4 / MOV / M4V ·{" "}
+              対応形式: MP4 / MOV / M4V / MP3 / M4A / WAV / FLAC ·{" "}
               {overwriteMode
                 ? "出力: 元ファイルを上書き"
                 : "出力: 元と同じ場所の cleaned フォルダ"}
@@ -456,7 +457,7 @@ export default function App() {
           <ul className="job-list">
             {isDragging && (
               <li className="drop-hint" aria-hidden>
-                追加の動画をドロップできます
+                追加の動画・音声をドロップできます
               </li>
             )}
             {jobs.map((job) => {
@@ -515,10 +516,10 @@ export default function App() {
                       <button
                         className="button compact"
                         onClick={() =>
-                          playVideo(job.inputPath, `入力 · ${fileName(job.inputPath)}`)
+                          playMedia(job.inputPath, `入力 · ${fileName(job.inputPath)}`)
                         }
                         disabled={isRunning && job.status === "processing"}
-                        title="入力動画を再生"
+                        title="入力ファイルを再生"
                       >
                         再生
                       </button>
@@ -526,12 +527,12 @@ export default function App() {
                         <button
                           className="button compact"
                           onClick={() =>
-                            playVideo(
+                            playMedia(
                               job.outputPath!,
                               `出力 · ${fileName(job.outputPath!)}`,
                             )
                           }
-                          title="クリーンアップ後の動画を再生"
+                          title="クリーンアップ後のファイルを再生"
                         >
                           出力を再生
                         </button>
@@ -602,7 +603,7 @@ export default function App() {
       </footer>
 
       {playback && (
-        <VideoPlayerModal
+        <MediaPlayerModal
           path={playback.path}
           label={playback.label}
           onClose={() => setPlayback(null)}
@@ -612,7 +613,7 @@ export default function App() {
   );
 }
 
-function VideoPlayerModal({
+function MediaPlayerModal({
   path,
   label,
   onClose,
@@ -622,6 +623,10 @@ function VideoPlayerModal({
   onClose: () => void;
 }) {
   const src = useMemo(() => convertFileSrc(path), [path]);
+  const isAudio = AUDIO_EXTENSIONS.has(extensionOf(path));
+  const [playbackError, setPlaybackError] = useState(false);
+
+  useEffect(() => setPlaybackError(false), [path]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -636,7 +641,7 @@ function VideoPlayerModal({
       className="player-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="動画プレビュー"
+      aria-label={isAudio ? "音声プレビュー" : "動画プレビュー"}
       onClick={onClose}
     >
       <div className="player-modal" onClick={(event) => event.stopPropagation()}>
@@ -649,9 +654,20 @@ function VideoPlayerModal({
             閉じる
           </button>
         </div>
-        <video className="player-video" src={src} controls autoPlay playsInline>
-          このブラウザでは動画を再生できません。
-        </video>
+        {isAudio ? (
+          <audio key={path} className="player-audio" src={src} controls autoPlay onError={() => setPlaybackError(true)}>
+            この環境では音声を再生できません。
+          </audio>
+        ) : (
+          <video key={path} className="player-video" src={src} controls autoPlay playsInline onError={() => setPlaybackError(true)}>
+            この環境では動画を再生できません。
+          </video>
+        )}
+        {playbackError && (
+          <p className="player-error" role="alert">
+            この環境ではプレビューを再生できません。ファイル一覧の「Finderで表示」から外部プレーヤーで確認してください。
+          </p>
+        )}
       </div>
     </div>
   );
