@@ -620,3 +620,14 @@ h1 { margin: 0; font-size: 34px; letter-spacing: -0.035em; }
 }
 
 
+
+.player-audio {
+  display: block;
+  width: calc(100% - 48px);
+  margin: 32px 24px;
+}
+
+.player-error {
+  padding: 0 24px 24px;
+  color: #b42318;
+}
