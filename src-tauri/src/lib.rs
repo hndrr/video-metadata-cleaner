@@ -116,7 +116,10 @@ fn validate_input(path: &PathBuf) -> Result<(), String> {
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
 
-    if !matches!(extension.as_str(), "mp4" | "mov" | "m4v") {
+    if !matches!(
+        extension.as_str(),
+        "mp4" | "mov" | "m4v" | "mp3" | "m4a" | "wav" | "flac"
+    ) {
         return Err(format!("未対応の形式です: .{extension}"));
     }
 
@@ -224,6 +227,55 @@ fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
     }
 }
 
+/// Preserve encoded media; audio inputs deliberately exclude cover art and data tracks.
+fn clean_args(input: &Path, output: &Path) -> Vec<String> {
+    let extension = input
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let audio = matches!(extension.as_str(), "mp3" | "m4a" | "wav" | "flac");
+    let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-y", "-i"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    args.push(input.to_string_lossy().into_owned());
+    let mapping: &[&str] = if audio {
+        &["-map", "0:a"]
+    } else {
+        &["-map", "0:v", "-map", "0:a?", "-map", "0:s?"]
+    };
+    args.extend(mapping.iter().map(|value| value.to_string()));
+    args.extend(
+        [
+            "-c",
+            "copy",
+            "-map_metadata",
+            "-1",
+            "-map_metadata:s",
+            "-1",
+            "-map_chapters",
+            "-1",
+            "-fflags",
+            "+bitexact",
+            "-metadata",
+            "encoder=",
+        ]
+        .into_iter()
+        .map(String::from),
+    );
+    if extension == "mp3" {
+        // Keep Xing's duration/gapless playback information; suppress user ID3 tags.
+        args.extend(
+            ["-id3v2_version", "0", "-write_id3v1", "0"]
+                .into_iter()
+                .map(String::from),
+        );
+    }
+    args.push(output.to_string_lossy().into_owned());
+    args
+}
+
 #[tauri::command]
 async fn clean_video(
     app: AppHandle,
@@ -235,32 +287,7 @@ async fn clean_video(
 
     let (write_path, final_path, will_overwrite) = resolve_output_paths(&input, overwrite)?;
 
-    let args = vec![
-        "-hide_banner".to_string(),
-        "-nostdin".to_string(),
-        "-y".to_string(),
-        "-i".to_string(),
-        input.to_string_lossy().into_owned(),
-        "-map".to_string(),
-        "0:v".to_string(),
-        "-map".to_string(),
-        "0:a?".to_string(),
-        "-map".to_string(),
-        "0:s?".to_string(),
-        "-c".to_string(),
-        "copy".to_string(),
-        "-map_metadata".to_string(),
-        "-1".to_string(),
-        "-map_metadata:s".to_string(),
-        "-1".to_string(),
-        "-map_chapters".to_string(),
-        "-1".to_string(),
-        "-fflags".to_string(),
-        "+bitexact".to_string(),
-        "-metadata".to_string(),
-        "encoder=".to_string(),
-        write_path.to_string_lossy().into_owned(),
-    ];
+    let args = clean_args(&input, &write_path);
 
     let command = app
         .shell()
@@ -350,4 +377,139 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_mapping_excludes_artwork_and_video_mapping_is_unchanged() {
+        for ext in ["mp3", "M4A", "wav", "flac"] {
+            let args = clean_args(Path::new(&format!("input.{ext}")), Path::new("output"));
+            let maps: Vec<_> = args
+                .windows(2)
+                .filter(|pair| pair[0] == "-map")
+                .map(|pair| pair[1].as_str())
+                .collect();
+            assert_eq!(maps, ["0:a"]);
+            assert_eq!(
+                args.iter().any(|value| value == "-id3v2_version"),
+                ext == "mp3"
+            );
+        }
+        let args = clean_args(Path::new("input.mov"), Path::new("output.mov"));
+        let maps: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "-map")
+            .map(|pair| pair[1].as_str())
+            .collect();
+        assert_eq!(maps, ["0:v", "0:a?", "0:s?"]);
+    }
+
+    // Requires ffmpeg and ffprobe on PATH. Run explicitly for media integration validation.
+    #[test]
+    #[ignore = "requires local FFmpeg and ffprobe"]
+    fn audio_remux_removes_tags_and_artwork_without_changing_samples() {
+        fn execute(tool: &str, args: &[String]) -> Vec<u8> {
+            let result = Command::new(tool)
+                .args(args)
+                .output()
+                .expect("media tool must be installed");
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            result.stdout
+        }
+        fn strings(values: &[&str]) -> Vec<String> {
+            values.iter().map(|value| value.to_string()).collect()
+        }
+        let dir = env::temp_dir().join(format!("vmc-audio-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        for (ext, codec) in [
+            ("mp3", "libmp3lame"),
+            ("m4a", "aac"),
+            ("wav", "pcm_s16le"),
+            ("flac", "flac"),
+            ("m4a", "alac"),
+        ] {
+            let input = dir.join(format!("{codec}.{ext}"));
+            let output = dir.join(format!("{codec}-clean.{ext}"));
+            let mut args = strings(&[
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1",
+            ]);
+            if ext != "wav" {
+                args.extend(strings(&[
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=red:s=32x32:r=1:d=1",
+                    "-map",
+                    "0:a",
+                    "-map",
+                    "1:v",
+                    "-c:v",
+                    "mjpeg",
+                    "-disposition:v",
+                    "attached_pic",
+                ]));
+            }
+            args.extend(strings(&[
+                "-c:a",
+                codec,
+                "-metadata",
+                "title=AUDIO_TEST_TITLE",
+                "-metadata",
+                "artist=AUDIO_TEST_ARTIST",
+                "-metadata",
+                "comment=AUDIO_TEST_COMMENT",
+            ]));
+            args.push(input.to_string_lossy().into_owned());
+            execute("ffmpeg", &args);
+            let probe = |path: &Path| {
+                let mut args = strings(&[
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format_tags:stream=codec_type:stream_tags",
+                    "-of",
+                    "json",
+                ]);
+                args.push(path.to_string_lossy().into_owned());
+                String::from_utf8(execute("ffprobe", &args)).unwrap()
+            };
+            let before = probe(&input);
+            assert!(before.contains("AUDIO_TEST_TITLE"));
+            assert_eq!(before.contains("\"video\""), ext != "wav");
+            validate_input(&input).unwrap();
+            execute("ffmpeg", &clean_args(&input, &output));
+            let after = probe(&output);
+            assert!(!after.contains("AUDIO_TEST_"), "{ext}: {after}");
+            assert!(!after.contains("\"video\""), "artwork remains: {ext}");
+            let samples = |path: &Path| {
+                let mut args = strings(&["-v", "error", "-i"]);
+                args.push(path.to_string_lossy().into_owned());
+                args.extend(strings(&[
+                    "-map",
+                    "0:a:0",
+                    "-c:a",
+                    "pcm_s32le",
+                    "-f",
+                    "s32le",
+                    "-",
+                ]));
+                execute("ffmpeg", &args)
+            };
+            assert_eq!(samples(&input), samples(&output), "audio changed: {codec}");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
